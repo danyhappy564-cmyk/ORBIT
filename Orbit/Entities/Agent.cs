@@ -146,6 +146,17 @@ public class Agent(int id, BotOwner bot, float[] taskScores) : Entity(id, taskSc
     public float OwnMiniLootValueThreshold;
 
     /// <summary>
+    /// Throttles retrying <see cref="Orbit.Sain.SainPersonality.GetBrainName"/> while this agent's threshold
+    /// resolution is still pending (SAIN hasn't attached a BotComponent to it yet). That lookup iterates
+    /// SAIN's entire live bot dictionary via reflection every call — cheap once SAIN has attached and the
+    /// result gets cached on <see cref="OwnMiniLootValueThreshold"/>/<see cref="OwnExtractLootThreshold"/>,
+    /// but retrying it on every loot check for every not-yet-attached agent (a spawn wave can have many at
+    /// once, and the dictionary it scans keeps growing with the raid) is the kind of recurring cost that adds
+    /// up to multi-second stalls. 0 = never retried yet.
+    /// </summary>
+    public float NextSainBrainRetryAt;
+
+    /// <summary>
     /// POIs this agent has personally value-rejected. Filtered against in dispatch and sweep so the agent
     /// isn't sent back, while softer-gated squad members can still be dispatched (squad-level
     /// <see cref="Squad.CompletedPoiIds"/> is untouched).

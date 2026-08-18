@@ -229,6 +229,15 @@ public class Squad(int id, float[] taskScores, int targetMembersCount) : Entity(
     public float SainResolveDeadline;
 
     /// <summary>
+    /// Throttles retrying <see cref="Orbit.Sain.SainPersonality.GetBrainName"/> while resolution is pending.
+    /// That lookup iterates SAIN's entire live bot dictionary via reflection every call, and
+    /// GotoObjectiveStrategy.Update() calls TryResolvePersonality every tick for every pending squad — with
+    /// continuous spawning keeping several squads pending at once (each within its own up-to-30s window),
+    /// retrying unthrottled adds up to a real per-frame cost. 0 = never attempted yet.
+    /// </summary>
+    public float NextSainBrainRetryAt;
+
+    /// <summary>
     /// Persistent virtual rally waypoint for the current combat caller. Recreated only once the caller has
     /// moved >8m from it — a fresh instance per tick broke reference alignment and re-dispatched every
     /// supporter every tick for the whole fight.

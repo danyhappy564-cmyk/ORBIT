@@ -199,26 +199,39 @@ public class SquadRegistry(SquadData squadData, StrategyManager strategyManager,
     /// </summary>
     private const float SainResolveTimeoutSeconds = 30f;
 
+    // How long a squad whose brain lookup just failed skips retrying GetBrainName (an O(n) reflection scan
+    // of SAIN's whole bot dictionary) before trying again. TryResolvePersonality runs every tick for every
+    // pending squad, and with continuous spawning several squads can be pending at once — unthrottled, that
+    // scan runs every frame per squad for up to SainResolveTimeoutSeconds each.
+    private const float SainBrainRetryCooldown = 3f;
+
     /// <summary>
     /// Strategy-tick callback for PMC squads with deferred personality resolution. Retries the SAIN brain
-    /// lookup; once resolved (or the deadline elapses, locking to Average), rolls the PersonalityProfile
-    /// and generates the squad's main objectives using the resolved archetype's mix weights. Safe to call
-    /// every tick — early-returns if the squad isn't pending. The deadline slides while no member is
-    /// active yet, so it only ever measures "SAIN had a live bot for N seconds", never loading time.
+    /// lookup (throttled to once every <see cref="SainBrainRetryCooldown"/>s per squad); once resolved (or
+    /// the deadline elapses, locking to Average), rolls the PersonalityProfile and generates the squad's main
+    /// objectives using the resolved archetype's mix weights. Safe to call every tick — early-returns if the
+    /// squad isn't pending. The deadline slides while no member is active yet, so it only ever measures "SAIN
+    /// had a live bot for N seconds", never loading time.
     /// </summary>
     public void TryResolvePersonality(Squad squad)
     {
         if (squad == null || !squad.SainResolutionPending) return;
 
-        var brainName = SainPersonality.GetBrainName(squad.Leader.Bot);
-        var resolved = !string.IsNullOrEmpty(brainName);
+        string brainName = null;
+        var resolved = false;
+        if (UnityEngine.Time.time >= squad.NextSainBrainRetryAt)
+        {
+            brainName = SainPersonality.GetBrainName(squad.Leader.Bot);
+            resolved = !string.IsNullOrEmpty(brainName);
+            if (!resolved) squad.NextSainBrainRetryAt = UnityEngine.Time.time + SainBrainRetryCooldown;
+        }
         if (!resolved && !AnyMemberActive(squad))
         {
             squad.SainResolveDeadline = UnityEngine.Time.time + SainResolveTimeoutSeconds;
             return;
         }
         var timedOut = UnityEngine.Time.time >= squad.SainResolveDeadline;
-        if (!resolved && !timedOut) return; // still waiting for SAIN
+        if (!resolved && !timedOut) return; // still waiting for SAIN (or its retry cooldown)
 
         squad.Archetype = SainPersonality.MapBrainToArchetype(brainName);
         squad.Personality = PersonalityProfile.Roll(squad.Archetype);

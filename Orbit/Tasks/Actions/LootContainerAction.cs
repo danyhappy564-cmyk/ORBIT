@@ -468,6 +468,12 @@ public class LootContainerAction(AgentData dataset, WaypointSystem waypointSyste
     /// get the archetype scalar; other cases fall through to <see cref="ResolveFallbackThreshold"/>. Result
     /// is cached on the agent. Never returns 0.
     /// </summary>
+    // How long an agent whose SAIN brain isn't resolved yet skips re-attempting GetBrainName (an O(n)
+    // reflection scan of SAIN's whole bot dictionary) before trying again. Long enough that a spawn-wave
+    // burst of not-yet-attached agents doesn't retry every loot check; short enough that a bot resolves
+    // within a couple of ticks of SAIN actually attaching.
+    private const float SainBrainRetryCooldown = 3f;
+
     internal static float GetOrResolveAgentMiniLootThreshold(Agent agent)
     {
         if (agent.OwnMiniLootValueThreshold > 0f) return agent.OwnMiniLootValueThreshold;
@@ -477,8 +483,14 @@ public class LootContainerAction(AgentData dataset, WaypointSystem waypointSyste
         var isPmc = role.Value.IsPMC();
         if (isPmc && (Plugin.SainPersonalityEnabled?.Value ?? false))
         {
+            if (Time.time < agent.NextSainBrainRetryAt) return ResolveFallbackThreshold(agent);
+
             var brainName = SainPersonality.GetBrainName(agent.Bot);
-            if (string.IsNullOrEmpty(brainName)) return ResolveFallbackThreshold(agent);
+            if (string.IsNullOrEmpty(brainName))
+            {
+                agent.NextSainBrainRetryAt = Time.time + SainBrainRetryCooldown;
+                return ResolveFallbackThreshold(agent);
+            }
 
             var archetype = SainPersonality.MapBrainToArchetype(brainName);
             agent.OwnMiniLootValueThreshold = PersonalityProfile.GetMiniLootThresholdFor(archetype);
@@ -521,6 +533,19 @@ public class LootContainerAction(AgentData dataset, WaypointSystem waypointSyste
 
         if (isPmc && (Plugin.SainPersonalityEnabled?.Value ?? false))
         {
+            if (Time.time < agent.NextSainBrainRetryAt)
+            {
+                // Still cooling down from a failed GetBrainName attempt — same squad-fallback / retry-later
+                // logic below, just without paying for another reflection scan this tick.
+                if (agent.Squad != null && !agent.Squad.SainResolutionPending)
+                {
+                    agent.OwnExtractLootThreshold = PersonalityProfile.RollExtractThresholdFor(agent.Squad.Archetype);
+                    Log.Info($"{agent} resolved own extract threshold via squad fallback: archetype='{agent.Squad.Archetype}' (SAIN brain lookup on cooldown) → {agent.OwnExtractLootThreshold:N0}₽");
+                    return agent.OwnExtractLootThreshold;
+                }
+                return 0f;
+            }
+
             var brainName = SainPersonality.GetBrainName(agent.Bot);
             if (!string.IsNullOrEmpty(brainName))
             {
@@ -529,6 +554,7 @@ public class LootContainerAction(AgentData dataset, WaypointSystem waypointSyste
                 Log.Info($"{agent} resolved own extract threshold: brain='{brainName}' → {archetype} → {agent.OwnExtractLootThreshold:N0}₽");
                 return agent.OwnExtractLootThreshold;
             }
+            agent.NextSainBrainRetryAt = Time.time + SainBrainRetryCooldown;
             // SAIN couldn't resolve this agent's brain. If the squad has already given up on SAIN resolution
             // and locked to a fallback archetype (Average by default), use that — otherwise the agent's
             // threshold stays at 0 forever and CheckExtractTrigger never fires for this bot. Without it:
@@ -541,7 +567,7 @@ public class LootContainerAction(AgentData dataset, WaypointSystem waypointSyste
                 Log.Info($"{agent} resolved own extract threshold via squad fallback: archetype='{agent.Squad.Archetype}' (SAIN brain lookup empty) → {agent.OwnExtractLootThreshold:N0}₽");
                 return agent.OwnExtractLootThreshold;
             }
-            return 0f; // squad still polling SAIN — retry on next loot
+            return 0f; // squad still polling SAIN — retry after cooldown
         }
         if (isPmc)
         {
