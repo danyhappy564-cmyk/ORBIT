@@ -25,6 +25,34 @@ public static class SainPersonality
     private static object _cachedBotManager;
     private static GameWorld _cachedBotManagerWorld;
 
+    // PropertyInfo cache for the per-bot walk inside GetBrainName. Every element of Bots.Values is the same
+    // concrete SAIN BotComponent type, and its Player/ProfileId/Info/Personality property shapes don't change
+    // between bots or calls — resolving them by name via GetType().GetProperty(...) on every single element,
+    // every single call, was the actual hot cost (O(bots) reflection metadata lookups per GetBrainName call,
+    // on top of GetBrainName itself being called per-agent / per-squad). Cached lazily on first successful
+    // resolution and re-resolved only if the observed runtime type ever changes (defensive, not expected).
+    private static PropertyInfo _valuesProperty;
+    private static Type _valuesPropertyOwner;
+    private static PropertyInfo _playerProperty;
+    private static Type _playerPropertyOwner;
+    private static PropertyInfo _profileIdProperty;
+    private static Type _profileIdPropertyOwner;
+    private static PropertyInfo _infoProperty;
+    private static Type _infoPropertyOwner;
+    private static PropertyInfo _personalityProperty;
+    private static Type _personalityPropertyOwner;
+
+    private static PropertyInfo ResolveCachedProperty(
+        object instance, string propertyName, ref PropertyInfo cache, ref Type cachedOwner)
+    {
+        if (instance == null) return null;
+        var type = instance.GetType();
+        if (cache != null && cachedOwner == type) return cache;
+        cache = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+        cachedOwner = type;
+        return cache;
+    }
+
     public static bool IsSainAvailable => _typesResolved;
 
     public static void InitIfNeeded()
@@ -138,21 +166,30 @@ public static class SainPersonality
             // could return false EVEN WHEN the bot was in the dict — likely because SAIN changed the dict
             // keying between versions, or because the entry was added by SAIN's tick AFTER the squad lock
             // attempt of the same frame. Either way, raid-review reading the same dict at the same frame
-            // succeeds with the iterate-Values approach. Slower (O(n) per lookup) but correct.
+            // succeeds with the iterate-Values approach. Slower (O(n) per lookup) but correct. The per-element
+            // property lookups are cached (see ResolveCachedProperty) so this is O(n) GetValue calls, not
+            // O(n) GetProperty(name) metadata searches.
             object botComponent = null;
-            var values = bots.GetType().GetProperty("Values")?.GetValue(bots) as IEnumerable;
+            var valuesProp = ResolveCachedProperty(bots, "Values", ref _valuesProperty, ref _valuesPropertyOwner);
+            var values = valuesProp?.GetValue(bots) as IEnumerable;
             if (values == null) return null;
             foreach (var bc in values)
             {
-                var p = bc?.GetType().GetProperty("Player")?.GetValue(bc);
-                var pid = p?.GetType().GetProperty("ProfileId")?.GetValue(p) as string;
+                if (bc == null) continue;
+                var playerProp = ResolveCachedProperty(bc, "Player", ref _playerProperty, ref _playerPropertyOwner);
+                var p = playerProp?.GetValue(bc);
+                if (p == null) continue;
+                var profileIdProp = ResolveCachedProperty(p, "ProfileId", ref _profileIdProperty, ref _profileIdPropertyOwner);
+                var pid = profileIdProp?.GetValue(p) as string;
                 if (pid == profileId) { botComponent = bc; break; }
             }
             if (botComponent == null) return null;
 
-            var info = botComponent.GetType().GetProperty("Info")?.GetValue(botComponent);
+            var infoProp = ResolveCachedProperty(botComponent, "Info", ref _infoProperty, ref _infoPropertyOwner);
+            var info = infoProp?.GetValue(botComponent);
             if (info == null) return null;
-            var personality = info.GetType().GetProperty("Personality")?.GetValue(info);
+            var personalityProp = ResolveCachedProperty(info, "Personality", ref _personalityProperty, ref _personalityPropertyOwner);
+            var personality = personalityProp?.GetValue(info);
             if (personality == null) return null;
             if (Enum.IsDefined(_ePersonalityType, personality))
                 return Enum.GetName(_ePersonalityType, personality);
