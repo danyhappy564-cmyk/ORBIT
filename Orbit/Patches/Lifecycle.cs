@@ -47,6 +47,13 @@ public class OrbitTickPatch : ModulePatch
         return typeof(AICoreControllerClass).GetMethod(nameof(AICoreControllerClass.Update));
     }
 
+    // TEMP diagnostic — remove once the real call rate of AICoreControllerClass.Update is confirmed.
+    // Counts how many times THIS postfix actually reaches orbit.Update() per real second, and logs it every
+    // 1s. Answers "is this really per-frame or throttled internally by BSG" directly, without needing to
+    // read BSG's own (obfuscated) implementation.
+    private static int _tickDiagCount;
+    private static float _tickDiagWindowStart = -1f;
+
     [PatchPostfix]
     public static void Postfix(AICoreControllerClass __instance)
     {
@@ -60,6 +67,15 @@ public class OrbitTickPatch : ModulePatch
         var orbit = Singleton<OrbitManager>.Instance;
         if (orbit == null)
             return;
+
+        if (_tickDiagWindowStart < 0f) _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
+        _tickDiagCount++;
+        if (UnityEngine.Time.unscaledTime - _tickDiagWindowStart >= 1f)
+        {
+            Log.Always($"TICKRATE-DIAG: AICoreControllerClass.Update -> orbit.Update() fired {_tickDiagCount}x in the last 1s");
+            _tickDiagCount = 0;
+            _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
+        }
 
         orbit.Update();
     }
