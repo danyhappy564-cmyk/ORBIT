@@ -48,10 +48,12 @@ public class OrbitTickPatch : ModulePatch
     }
 
     // TEMP diagnostic — remove once the real call rate of AICoreControllerClass.Update is confirmed.
-    // Counts how many times THIS postfix actually reaches orbit.Update() per real second, and logs it every
-    // 1s. Answers "is this really per-frame or throttled internally by BSG" directly, without needing to
-    // read BSG's own (obfuscated) implementation.
+    // AICoreControllerClass is (very likely) one instance PER BOT, so raw calls/sec conflates "how often does
+    // one bot's controller tick" with "how many bots are alive" — 30 bots x 2Hz looks the same as 1 bot x
+    // 60Hz in a naive total. Tracking distinct __instance hashes separates them: totalTicks / distinctBots
+    // gives the actual per-bot rate regardless of headcount.
     private static int _tickDiagCount;
+    private static readonly System.Collections.Generic.HashSet<int> _tickDiagInstances = new();
     private static float _tickDiagWindowStart = -1f;
 
     [PatchPostfix]
@@ -70,10 +72,14 @@ public class OrbitTickPatch : ModulePatch
 
         if (_tickDiagWindowStart < 0f) _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
         _tickDiagCount++;
+        _tickDiagInstances.Add(__instance.GetHashCode());
         if (UnityEngine.Time.unscaledTime - _tickDiagWindowStart >= 1f)
         {
-            Log.Always($"TICKRATE-DIAG: AICoreControllerClass.Update -> orbit.Update() fired {_tickDiagCount}x in the last 1s");
+            var distinct = _tickDiagInstances.Count;
+            var perBot = distinct > 0 ? (float)_tickDiagCount / distinct : 0f;
+            Log.Always($"TICKRATE-DIAG: {_tickDiagCount} total ticks from {distinct} distinct bot controllers in the last 1s (~{perBot:F1}/bot/s)");
             _tickDiagCount = 0;
+            _tickDiagInstances.Clear();
             _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
         }
 
