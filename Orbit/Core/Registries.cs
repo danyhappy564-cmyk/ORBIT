@@ -217,9 +217,15 @@ public class SquadRegistry(SquadData squadData, StrategyManager strategyManager,
     {
         if (squad == null || !squad.SainResolutionPending) return;
 
+        // Bypass the cooldown right at the deadline: without this, a squad whose cooldown happened to still
+        // be running when SainResolveDeadline passed would lock to Average off a stale/skipped attempt,
+        // even if SAIN had actually resolved the brain during that cooldown window. Locking to the wrong
+        // archetype sticks for the rest of the raid, so the one extra scan here is worth it.
+        var pastDeadline = UnityEngine.Time.time >= squad.SainResolveDeadline;
+
         string brainName = null;
         var resolved = false;
-        if (UnityEngine.Time.time >= squad.NextSainBrainRetryAt)
+        if (pastDeadline || UnityEngine.Time.time >= squad.NextSainBrainRetryAt)
         {
             brainName = SainPersonality.GetBrainName(squad.Leader.Bot);
             resolved = !string.IsNullOrEmpty(brainName);
