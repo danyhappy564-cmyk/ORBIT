@@ -47,15 +47,6 @@ public class OrbitTickPatch : ModulePatch
         return typeof(AICoreControllerClass).GetMethod(nameof(AICoreControllerClass.Update));
     }
 
-    // TEMP diagnostic — remove once the real call rate of AICoreControllerClass.Update is confirmed.
-    // AICoreControllerClass is (very likely) one instance PER BOT, so raw calls/sec conflates "how often does
-    // one bot's controller tick" with "how many bots are alive" — 30 bots x 2Hz looks the same as 1 bot x
-    // 60Hz in a naive total. Tracking distinct __instance hashes separates them: totalTicks / distinctBots
-    // gives the actual per-bot rate regardless of headcount.
-    private static int _tickDiagCount;
-    private static readonly System.Collections.Generic.HashSet<int> _tickDiagInstances = new();
-    private static float _tickDiagWindowStart = -1f;
-
     [PatchPostfix]
     public static void Postfix(AICoreControllerClass __instance)
     {
@@ -69,19 +60,6 @@ public class OrbitTickPatch : ModulePatch
         var orbit = Singleton<OrbitManager>.Instance;
         if (orbit == null)
             return;
-
-        if (_tickDiagWindowStart < 0f) _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
-        _tickDiagCount++;
-        _tickDiagInstances.Add(__instance.GetHashCode());
-        if (UnityEngine.Time.unscaledTime - _tickDiagWindowStart >= 1f)
-        {
-            var distinct = _tickDiagInstances.Count;
-            var perBot = distinct > 0 ? (float)_tickDiagCount / distinct : 0f;
-            Log.Always($"TICKRATE-DIAG: {_tickDiagCount} total ticks from {distinct} distinct bot controllers in the last 1s (~{perBot:F1}/bot/s)");
-            _tickDiagCount = 0;
-            _tickDiagInstances.Clear();
-            _tickDiagWindowStart = UnityEngine.Time.unscaledTime;
-        }
 
         orbit.Update();
     }
