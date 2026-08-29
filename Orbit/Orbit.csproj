@@ -9,7 +9,7 @@
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <!-- Override locally if your SPT install is elsewhere -->
-        <SptRoot Condition=" '$(SptRoot)' == '' ">C:\Games\SPT-4.0-hardcore</SptRoot>
+        <SptRoot Condition=" '$(SptRoot)' == '' ">E:\SPT 4.0.10</SptRoot>
         <AssemblyName>ORBIT</AssemblyName>
     </PropertyGroup>
 
